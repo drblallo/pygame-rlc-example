@@ -222,11 +222,65 @@ def get_cell(pos):
     y.value = col
     return (x, y)
 
+class GameEventHandler:
+    def __init__(self, engine):
+        self.handlers = {}
+        self.engine = engine
+
+    def __getattr__(self, attribute):
+        if attribute in self.__dict__:
+            return self.__dict__[attribute]
+        if attribute in self.handlers:
+            return self.handlers[attribute]
+        return super().__getattribute__(attribute)
+
+    def __setattr__(self, attribute, value):
+        if attribute != "engine" and attribute != "handlers":
+            self.handlers[attribute] = lambda *args: value(self.engine, *args)
+            return value
+        else:
+            super().__setattr__(attribute, value)
+
+
+    def on_valid_action(self, action):
+        wrapper.functions.print(action)
+
+    def on_invalid_action(self, action):
+        print("INVALID: ", end="")
+        sys.stdout.flush()
+        wrapper.functions.print(action)
+
+
+class InputHandler:
+    def __init__(self, engine):
+        self.special_handlers = {}
+        self.engine = engine
+
+    def register_handler(self, event_type: pygame.event.EventType, event_to_action):
+        self.special_handlers[event_type] = event_to_action
+
+    def on_input(self, input: pygame.event):
+        if input.type == QUIT:
+            self.engine.running = False
+            return
+
+        for event_type, handler in self.special_handlers.items():
+            if input.type == event_type:
+                action = handler(input)
+                if not isinstance(action, wrapper.AnyGameAction):
+                    real = wrapper.AnyGameAction()
+                    wrapper.functions.assign(real, action)
+                    action = real
+                if wrapper.functions.can_apply(action, self.engine.game_state):
+                    self.engine.on_valid_action(action)
+                    wrapper.functions.apply(action, self.engine.game_state)
+                else:
+                    self.engine.on_invalid_action(action)
+
 class Engine:
-    def __init__(self, input_handler, event_handler, game_state):
-        self.event_handler = event_handler
-        event_handler.set_engine(self)
-        self.input_handler = input_handler
+    def __init__(self, game_state):
+        self.event_handler = GameEventHandler(self)
+        self.input_handler = InputHandler(self)
         self.game_state = game_state
         self.clock = pygame.time.Clock()
         self.running = True
@@ -237,7 +291,7 @@ class Engine:
         delta_time = self.clock.tick(60) / 1000.0  # Delta time in seconds
 
         for event in pygame.event.get():
-            self.input_handler.on_input(self, event)
+            self.input_handler.on_input(event)
 
         # Update animations
         self.animation_engine.update(delta_time)
@@ -260,65 +314,9 @@ class Engine:
     def on_invalid_action(self, action):
         self.event_handler.on_invalid_action(action)
 
-class GameEventHandler:
-    def __init__(self):
-        self.handlers = {}
-        self.engine = None
 
-    def set_engine(self, engine):
-        self.engine = engine
-
-    def __getattr__(self, attribute):
-        if attribute in self.__dict__:
-            return self__dict__[attribute]
-        if attribute in self.handlers:
-            return self.handlers[attribute]
-        return super().__getattribute__(attribute)
-
-    def __setattr__(self, attribute, value):
-        if attribute != "engine" and attribute != "handlers":
-            self.handlers[attribute] = lambda *args: value(self, *args)
-            return value
-        else:
-            super().__setattr__(attribute, value)
-
-
-    def on_valid_action(self, action):
-        wrapper.functions.print(action)
-
-    def on_invalid_action(self, action):
-        print("INVALID: ", end="")
-        sys.stdout.flush()
-        wrapper.functions.print(action)
-
-
-class InputHandler:
-    def __init__(self):
-        self.special_handlers = {}
-
-    def register_handler(self, event_type: pygame.event.EventType, event_to_action):
-        self.special_handlers[event_type] = event_to_action
-
-    def on_input(self, engine: Engine, input: pygame.event):
-        if input.type == QUIT:
-            engine.running = False
-            return
-
-        for event_type, handler in self.special_handlers.items():
-            if input.type == event_type:
-                action = handler(input)
-                if not isinstance(action, wrapper.AnyGameAction):
-                    real = wrapper.AnyGameAction()
-                    wrapper.functions.assign(real, action)
-                    action = real
-                if wrapper.functions.can_apply(action, engine.game_state):
-                    engine.on_valid_action(action)
-                    wrapper.functions.apply(action, engine.game_state)
-                else:
-                    engine.on_invalid_action(action)
-
-def on_slot_change(event_handler, x: int, y: int, player: int):
-    fill(x, y, player, event_handler.engine.animation_engine, event_handler.engine.cell_manager)
+def on_slot_change(engine, x: int, y: int, player: int):
+    fill(x, y, player, engine.animation_engine, engine.cell_manager)
 
 
 def click_to_mark(event: pygame.event) -> wrapper.GameMark:
@@ -331,7 +329,7 @@ def click_to_mark(event: pygame.event) -> wrapper.GameMark:
 # Main loop
 def main():
     state = wrapper.functions.play()
-    engine = Engine(InputHandler(), GameEventHandler(), state)
+    engine = Engine(state)
 
     engine.input_handler.register_handler(MOUSEBUTTONDOWN, click_to_mark)
     engine.event_handler.on_slot_change = on_slot_change
